@@ -73,28 +73,48 @@ public class Xls2Sqlite {
         }
     }
 
+    /**
+     * Create a table for the sheet and insert its data.
+     *
+     * @throws SQLException
+     */
     private static void processSheet(Connection connection, Sheet sheet) throws SQLException {
-        String sheetName = normalizeForDb(sheet.getName());
         int colCount = sheet.getColumns();
         int rowCount = sheet.getRows();
         if (rowCount < 2 || colCount < 1) {
             System.err.println("Ignoring empty sheet " + sheet.getName());
             return;
         }
+
+        createTable(sheet, connection);
+        PreparedStatement insertStatement = prepareInsertStatement(sheet, connection);
+
+        int insertedCount = 0;
+        for (int row = 1; row < rowCount; row++) {
+            addRowInsertToBatch(sheet.getRow(0), sheet.getRow(row), insertStatement);
+            if (row % BATCH_INSERT_SIZE == 0) {
+                insertedCount = executeBatchInsert(insertStatement, insertedCount);
+            }
+        }
+        executeBatchInsert(insertStatement, insertedCount);
+        insertStatement.close();
+    }
+
+    /**
+     * Create a table in the database for the given sheet.
+     *
+     * @param sheet the first row in the sheet is read for the column names.
+     * @throws SQLException
+     */
+    private static void createTable(Sheet sheet, Connection connection) throws SQLException {
+        int colCount = sheet.getColumns();
+        String sheetName = normalizeForDb(sheet.getName());
         List<String> columnDefinitions = new ArrayList<>();
-        List<Integer> ignoredColumns = new ArrayList<>();
-        List<String> columnNames = new ArrayList<>();
-        List<String> insertArgs = new ArrayList<>();
         for (int col = 0; col < colCount; col++) {
             Cell header = sheet.getCell(col, 0);
-            if (header.getContents().startsWith("#")) {
-                ignoredColumns.add(col);
-                continue;
-            }
+            if (header.getContents().startsWith("#")) continue;
             String columnName = normalizeForDb(header.getContents());
             columnDefinitions.add(columnName + " TEXT");
-            columnNames.add(columnName);
-            insertArgs.add("?");
         }
 
         String sqlCreateTable = String.format("CREATE TABLE %s (%s)", sheetName, String.join(", ", columnDefinitions));
@@ -103,41 +123,65 @@ public class Xls2Sqlite {
         createTableStatement.execute(sqlCreateTable);
         createTableStatement.close();
         System.out.println("executed " + sqlCreateTable);
+    }
+
+    /**
+     * @return the insert statement, with no row data yet.
+     * @throws SQLException
+     */
+    private static PreparedStatement prepareInsertStatement(Sheet sheet, Connection connection) throws SQLException {
+        int colCount = sheet.getColumns();
+        String sheetName = normalizeForDb(sheet.getName());
+        List<String> columnNames = new ArrayList<>();
+        List<String> insertArgs = new ArrayList<>();
+        for (int col = 0; col < colCount; col++) {
+            Cell header = sheet.getCell(col, 0);
+            if (header.getContents().startsWith("#")) continue;
+            String columnName = normalizeForDb(header.getContents());
+            columnNames.add(columnName);
+            insertArgs.add("?");
+        }
 
         String sqlInsertRow = String.format("INSERT INTO %s (%s) VALUES (%s)", sheetName,
                 String.join(", ", columnNames),
                 String.join(", ", insertArgs));
-        PreparedStatement insertStatement = connection.prepareStatement(sqlInsertRow);
+        return connection.prepareStatement(sqlInsertRow);
+    }
 
-        int insertedCount = 0;
-        for (int row = 1; row < rowCount; row++) {
-            List<String> insertValues = new ArrayList<>();
-
-            boolean isRowEmpty = true;
-            for (int col = 0; col < colCount; col++) {
-                if (ignoredColumns.contains(col)) continue;
-                String value = sheet.getCell(col, row).getContents();
-                if (value != null && !value.trim().isEmpty()) isRowEmpty = false;
-                insertValues.add(value);
-            }
-
-            // Skip empty rows
-            if (isRowEmpty) continue;
-
-            for (int i = 0; i < insertValues.size(); i++) {
-                insertStatement.setString(i + 1, insertValues.get(i));
-            }
-            insertStatement.addBatch();
-            if (row % BATCH_INSERT_SIZE == 0) {
-                int[] result = insertStatement.executeBatch();
-                insertedCount += result.length;
-                System.out.println(insertedCount + " rows inserted into " + sheetName);
-            }
+    /**
+     * Adds a row insert to the batch statement.
+     *
+     * @throws SQLException
+     */
+    private static void addRowInsertToBatch(Cell[] headers, Cell[] row, PreparedStatement batchStatement) throws SQLException {
+        boolean isRowEmpty = true;
+        int colCount = row.length;
+        List<String> insertValues = new ArrayList<>();
+        for (int col = 0; col < colCount; col++) {
+            if (headers[col].getContents().startsWith("#")) continue;
+            String value = row[col].getContents();
+            if (value != null && !value.trim().isEmpty()) isRowEmpty = false;
+            insertValues.add(value);
         }
-        int[] result = insertStatement.executeBatch();
-        insertedCount += result.length;
-        System.out.println(insertedCount + " rows inserted into " + sheetName);
-        insertStatement.close();
+
+        // Skip empty rows
+        if (isRowEmpty) return;
+
+        for (int i = 0; i < insertValues.size(); i++) {
+            batchStatement.setString(i + 1, insertValues.get(i));
+        }
+        batchStatement.addBatch();
+
+    }
+
+    /**
+     * Execute this batch statement and log the total number of rows executed in this batch plus the rows already inserted before this execution.
+     */
+    private static int executeBatchInsert(PreparedStatement batchStatement, int rowsAlreadyInserted) throws SQLException {
+        int[] result = batchStatement.executeBatch();
+        int total = rowsAlreadyInserted + result.length;
+        System.out.println(total + " rows inserted");
+        return total;
     }
 
     /**
