@@ -112,12 +112,13 @@ public class Xls2Sqlite {
         List<String> columnDefinitions = new ArrayList<>();
         for (int col = 0; col < colCount; col++) {
             Cell header = sheet.getCell(col, 0);
-            if (header.getContents().startsWith("#")) continue;
+            if (header.getContents().startsWith("#") || header.getContents().trim().isEmpty()) continue;
             String columnName = normalizeForDb(header.getContents());
             columnDefinitions.add(columnName + " TEXT");
         }
 
         String sqlCreateTable = String.format("CREATE TABLE %s (%s)", sheetName, String.join(", ", columnDefinitions));
+        System.out.println("executing " + sqlCreateTable);
         Statement createTableStatement = connection.createStatement();
 
         createTableStatement.execute(sqlCreateTable);
@@ -136,7 +137,7 @@ public class Xls2Sqlite {
         List<String> insertArgs = new ArrayList<>();
         for (int col = 0; col < colCount; col++) {
             Cell header = sheet.getCell(col, 0);
-            if (header.getContents().startsWith("#")) continue;
+            if (header.getContents().startsWith("#") || header.getContents().trim().isEmpty()) continue;
             String columnName = normalizeForDb(header.getContents());
             columnNames.add(columnName);
             insertArgs.add("?");
@@ -158,7 +159,7 @@ public class Xls2Sqlite {
         int colCount = row.length;
         List<String> insertValues = new ArrayList<>();
         for (int col = 0; col < colCount; col++) {
-            if (headers[col].getContents().startsWith("#")) continue;
+            if (headers[col].getContents().startsWith("#") || headers[col].getContents().trim().isEmpty()) continue;
             String value = row[col].getContents();
             if (value != null && !value.trim().isEmpty()) isRowEmpty = false;
             insertValues.add(value);

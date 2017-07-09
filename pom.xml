@@ -6,7 +6,7 @@
 
 	<groupId>ca.rmen</groupId>
 	<artifactId>xls2sqlite</artifactId>
-	<version>0.0.2</version>
+	<version>0.0.3</version>
 
 	<dependencies>
 		<dependency>
@@ -45,6 +45,7 @@
 						<descriptorRef>jar-with-dependencies</descriptorRef>
 					</descriptorRefs>
 					<appendAssemblyId>false</appendAssemblyId>
+					<attach>false</attach>
 				</configuration>
 			</plugin>
 			<plugin>
